@@ -12,17 +12,22 @@ public class NetworkedServer : MonoBehaviour
     int reliableChannelID;
     int unreliableChannelID;
     int hostID;
-    int socketPort = 5491;
+    int socketPort = 25001;
 
     // Start is called before the first frame update
     void Start()
     {
         NetworkTransport.Init();
+
         ConnectionConfig config = new ConnectionConfig();
+
         reliableChannelID = config.AddChannel(QosType.Reliable);
         unreliableChannelID = config.AddChannel(QosType.Unreliable);
+
         HostTopology topology = new HostTopology(config, maxConnections);
         hostID = NetworkTransport.AddHost(topology, socketPort, null);
+
+        Debug.Log("Server started, hostid: " + hostID);
         
     }
 
@@ -66,8 +71,23 @@ public class NetworkedServer : MonoBehaviour
     }
     
     private void ProcessRecievedMsg(string msg, int id)
-    {
-        Debug.Log("msg recieved = " + msg + ".  connection id = " + id);
-    }
+    { 
+        string[] data = msg.Split(',');
 
+        if(data[0] == ServerClientSignifiers.Login)
+        {
+            Debug.Log("trying to login");
+        }
+        else if (data[0] == ServerClientSignifiers.Register)
+        {
+            Debug.Log("trying to regiter");
+        }
+
+        //check what kind of message you just receive, then decide what to do with it.
+    }
+}
+public static class ServerClientSignifiers
+{
+    public static string Login = "001";
+    public static string Register = "002";
 }
