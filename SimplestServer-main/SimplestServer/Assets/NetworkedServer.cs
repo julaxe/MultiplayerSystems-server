@@ -18,7 +18,6 @@ public class NetworkedServer : MonoBehaviour
     private Transform transformRegisteredUsers;
     private Transform transfromLoggedUsers;
 
-    // Start is called before the first frame update
     void Start()
     {
         NetworkTransport.Init();
@@ -42,7 +41,6 @@ public class NetworkedServer : MonoBehaviour
 
     }
 
-    // Update is called once per frame
     void Update()
     {
 
@@ -95,7 +93,7 @@ public class NetworkedServer : MonoBehaviour
             //check first if the user is already logged in
             if(loggedUsers.Exists(x => x.GetConnectionId() == id))
             {
-                SendMessageToClient("already logged in", id);
+                SendMessageToClient(ServerStatus.Error+ "," + ServerClientSignifiers.Login + ",User already logged in", id);
                 return;
             }
             //check if the user already exist
@@ -105,17 +103,17 @@ public class NetworkedServer : MonoBehaviour
                 if(userAccounts.Exists(x => x.GetName() == data[1] && x.GetPassword() == data[2]))
                 {
                     //successfull login
-                    SendMessageToClient("successfull login", id);
+                    SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.Login + ",Successfully logged in", id);
                     AddNewLoggedUser(userAccounts.Find(x => x.GetName() == data[1]), id);
                 }
                 else
                 {
-                    SendMessageToClient("wrong password", id);
+                    SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.Login + ",Wrong password", id);
                 }
             }
             else
             {
-                SendMessageToClient("user doesn't exist", id);
+                SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.Login + ",User doesn't exist", id);
             }
         }
         else if (data[0] == ServerClientSignifiers.Register)
@@ -124,17 +122,17 @@ public class NetworkedServer : MonoBehaviour
             //check if the user already exist
             if (userAccounts.Exists(x => x.GetName() == data[1]))
             {
-                SendMessageToClient("user already exist, try to login", id);
+                SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.Register + ",User already exist - try to login instead", id);
             }
             else
             {
                 AddNewUser(data[1], data[2]);
+                AddNewLoggedUser(userAccounts.Find(x => x.GetName() == data[1]), id);
                 SaveUserAccounts();
-                SendMessageToClient("new User created", id);
+                SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.Register + ",New user created", id);
             }
         }
 
-        //check what kind of message you just receive, then decide what to do with it.
     }
 
     private void LoadUserAccounts()
@@ -179,7 +177,9 @@ public class NetworkedServer : MonoBehaviour
 
     private void DeleteLoggedUser(int connectionId)
     {
-        loggedUsers.Remove(loggedUsers.Find(x => x.GetConnectionId() == connectionId));
+        LoggedAccount temp = loggedUsers.Find(x => x.GetConnectionId() == connectionId);
+        Destroy(temp.GetObject());
+        loggedUsers.Remove(temp);
     }
 }
 public static class ServerClientSignifiers
@@ -187,7 +187,11 @@ public static class ServerClientSignifiers
     public static string Login = "001";
     public static string Register = "002";
 }
-
+public static class ServerStatus
+{
+    public static string Success = "001";
+    public static string Error = "002";
+}
 public class UserAccount
 {
     public UserAccount(string name, string password)
@@ -210,10 +214,6 @@ public class LoggedAccount
         this.obj = obj;
         this.connectionId = connectionId;
         this.user = user;
-    }
-    ~LoggedAccount()
-    {
-        GameObject.Destroy(this.obj);
     }
 
     private GameObject obj;
