@@ -13,6 +13,10 @@ public class NetworkedServer : MonoBehaviour
     int hostID;
     int socketPort = 25001;
     List<UserAccount> userAccounts;
+    List<LoggedAccount> loggedUsers;
+    private GameObject templateUIUser;
+    private Transform transformRegisteredUsers;
+    private Transform transfromLoggedUsers;
 
     // Start is called before the first frame update
     void Start()
@@ -28,9 +32,12 @@ public class NetworkedServer : MonoBehaviour
         hostID = NetworkTransport.AddHost(topology, socketPort, null);
 
         Debug.Log("Server started, hostid: " + hostID);
+        transformRegisteredUsers = GameObject.Find("Canvas/UsersRegistered/Scroll").transform;
+        transfromLoggedUsers = GameObject.Find("Canvas/UserLoggedIn/Scroll").transform;
+        templateUIUser = Resources.Load<GameObject>("Prefabs/User");
 
-        //Load all the accounts
         userAccounts = new List<UserAccount>();
+        loggedUsers = new List<LoggedAccount>();
         LoadUserAccounts();
 
     }
@@ -62,6 +69,10 @@ public class NetworkedServer : MonoBehaviour
                 break;
             case NetworkEventType.DisconnectEvent:
                 Debug.Log("Disconnection, " + recConnectionID);
+                if(loggedUsers.Exists(x => x.GetConnectionId() == recConnectionID))
+                {
+                    DeleteLoggedUser(recConnectionID);
+                }
                 break;
         }
 
@@ -81,6 +92,12 @@ public class NetworkedServer : MonoBehaviour
         if(data[0] == ServerClientSignifiers.Login)
         {
             Debug.Log("start login");
+            //check first if the user is already logged in
+            if(loggedUsers.Exists(x => x.GetConnectionId() == id))
+            {
+                SendMessageToClient("already logged in", id);
+                return;
+            }
             //check if the user already exist
             if(userAccounts.Exists(x => x.GetName() == data[1]))
             {
@@ -89,6 +106,7 @@ public class NetworkedServer : MonoBehaviour
                 {
                     //successfull login
                     SendMessageToClient("successfull login", id);
+                    AddNewLoggedUser(userAccounts.Find(x => x.GetName() == data[1]), id);
                 }
                 else
                 {
@@ -110,7 +128,7 @@ public class NetworkedServer : MonoBehaviour
             }
             else
             {
-                userAccounts.Add(new UserAccount(data[1], data[2]));
+                AddNewUser(data[1], data[2]);
                 SaveUserAccounts();
                 SendMessageToClient("new User created", id);
             }
@@ -129,7 +147,7 @@ public class NetworkedServer : MonoBehaviour
             while((line = sr.ReadLine()) != null)
             {
                 string[] account = line.Split(',');
-                userAccounts.Add(new UserAccount(account[0], account[1]));
+                AddNewUser(account[0], account[1]);
             }
         }
 
@@ -143,6 +161,25 @@ public class NetworkedServer : MonoBehaviour
             sw.WriteLine(user.GetName() + "," + user.GetPassword());
         }
         sw.Close();
+    }
+
+    private void AddNewUser(string userName, string password)
+    {
+        userAccounts.Add(new UserAccount(userName, password));
+        GameObject temp = Instantiate(templateUIUser, transformRegisteredUsers);
+        temp.GetComponent<TMPro.TextMeshProUGUI>().text = userName + "," + password;
+    }
+
+    private void AddNewLoggedUser(UserAccount user, int connectionId)
+    {
+        GameObject temp = Instantiate(templateUIUser, transfromLoggedUsers);
+        temp.GetComponent<TMPro.TextMeshProUGUI>().text = user.GetName() + "," + connectionId;
+        loggedUsers.Add(new LoggedAccount(temp, user, connectionId));
+    }
+
+    private void DeleteLoggedUser(int connectionId)
+    {
+        loggedUsers.Remove(loggedUsers.Find(x => x.GetConnectionId() == connectionId));
     }
 }
 public static class ServerClientSignifiers
@@ -164,4 +201,25 @@ public class UserAccount
     public string GetName() { return name; }
     public string GetPassword() { return password; }
 
+}
+
+public class LoggedAccount
+{
+    public LoggedAccount(GameObject obj, UserAccount user, int connectionId)
+    {
+        this.obj = obj;
+        this.connectionId = connectionId;
+        this.user = user;
+    }
+    ~LoggedAccount()
+    {
+        GameObject.Destroy(this.obj);
+    }
+
+    private GameObject obj;
+    private int connectionId;
+    private UserAccount user;
+    public int GetConnectionId() { return connectionId; }
+    public UserAccount GetUser() { return user; }
+    public GameObject GetObject() { return obj; }
 }
