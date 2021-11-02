@@ -4,7 +4,6 @@ using System.Text;
 using UnityEngine;
 using UnityEngine.Networking;
 using System.IO;
-using UnityEngine.UI;
 
 public class NetworkedServer : MonoBehaviour
 {
@@ -13,6 +12,7 @@ public class NetworkedServer : MonoBehaviour
     int unreliableChannelID;
     int hostID;
     int socketPort = 25001;
+    List<UserAccount> userAccounts;
 
     // Start is called before the first frame update
     void Start()
@@ -28,7 +28,11 @@ public class NetworkedServer : MonoBehaviour
         hostID = NetworkTransport.AddHost(topology, socketPort, null);
 
         Debug.Log("Server started, hostid: " + hostID);
-        
+
+        //Load all the accounts
+        userAccounts = new List<UserAccount>();
+        LoadUserAccounts();
+
     }
 
     // Update is called once per frame
@@ -76,18 +80,88 @@ public class NetworkedServer : MonoBehaviour
 
         if(data[0] == ServerClientSignifiers.Login)
         {
-            Debug.Log("trying to login");
+            Debug.Log("start login");
+            //check if the user already exist
+            if(userAccounts.Exists(x => x.GetName() == data[1]))
+            {
+                //now check the password
+                if(userAccounts.Exists(x => x.GetName() == data[1] && x.GetPassword() == data[2]))
+                {
+                    //successfull login
+                    SendMessageToClient("successfull login", id);
+                }
+                else
+                {
+                    SendMessageToClient("wrong password", id);
+                }
+            }
+            else
+            {
+                SendMessageToClient("user doesn't exist", id);
+            }
         }
         else if (data[0] == ServerClientSignifiers.Register)
         {
-            Debug.Log("trying to regiter");
+            Debug.Log("start regiter");
+            //check if the user already exist
+            if (userAccounts.Exists(x => x.GetName() == data[1]))
+            {
+                SendMessageToClient("user already exist, try to login", id);
+            }
+            else
+            {
+                userAccounts.Add(new UserAccount(data[1], data[2]));
+                SaveUserAccounts();
+                SendMessageToClient("new User created", id);
+            }
         }
 
         //check what kind of message you just receive, then decide what to do with it.
+    }
+
+    private void LoadUserAccounts()
+    {
+        string path = Application.dataPath + Path.DirectorySeparatorChar + "ListUserAccounts.txt";
+        StreamReader sr = new StreamReader(path);
+        string line = "";
+        if(sr != null)
+        {
+            while((line = sr.ReadLine()) != null)
+            {
+                string[] account = line.Split(',');
+                userAccounts.Add(new UserAccount(account[0], account[1]));
+            }
+        }
+
+    }
+    private void SaveUserAccounts()
+    {
+        string path = Application.dataPath + Path.DirectorySeparatorChar + "ListUserAccounts.txt";
+        StreamWriter sw = new StreamWriter(path);
+        foreach(UserAccount user in userAccounts)
+        {
+            sw.WriteLine(user.GetName() + "," + user.GetPassword());
+        }
+        sw.Close();
     }
 }
 public static class ServerClientSignifiers
 {
     public static string Login = "001";
     public static string Register = "002";
+}
+
+public class UserAccount
+{
+    public UserAccount(string name, string password)
+    {
+        this.name = name;
+        this.password = password;
+    }
+    private string name;
+    private string password;
+
+    public string GetName() { return name; }
+    public string GetPassword() { return password; }
+
 }
