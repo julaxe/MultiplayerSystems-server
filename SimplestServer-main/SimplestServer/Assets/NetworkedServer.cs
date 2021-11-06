@@ -13,10 +13,12 @@ public class NetworkedServer : MonoBehaviour
     int hostID;
     int socketPort = 25001;
     List<UserAccount> userAccounts;
-    List<LoggedAccount> loggedUsers;
+    List<int> connectedUsers;
+    List<ConnectedAccount> loggedUsers;
     private GameObject templateUIUser;
     private Transform transformRegisteredUsers;
     private Transform transfromLoggedUsers;
+    private Transform transfromConnectedUsers;
 
     void Start()
     {
@@ -26,17 +28,18 @@ public class NetworkedServer : MonoBehaviour
 
         reliableChannelID = config.AddChannel(QosType.Reliable);
         unreliableChannelID = config.AddChannel(QosType.Unreliable);
-
         HostTopology topology = new HostTopology(config, maxConnections);
         hostID = NetworkTransport.AddHost(topology, socketPort, null);
 
         Debug.Log("Server started, hostid: " + hostID);
         transformRegisteredUsers = GameObject.Find("Canvas/UsersRegistered/Scroll").transform;
-        transfromLoggedUsers = GameObject.Find("Canvas/UserLoggedIn/Scroll").transform;
+        transfromLoggedUsers = GameObject.Find("Canvas/UsersLoggedIn/Scroll").transform;
+        transfromConnectedUsers = GameObject.Find("Canvas/UsersConnected/Scroll").transform;
         templateUIUser = Resources.Load<GameObject>("Prefabs/User");
 
         userAccounts = new List<UserAccount>();
-        loggedUsers = new List<LoggedAccount>();
+        connectedUsers = new List<int>();
+        loggedUsers = new List<ConnectedAccount>();
         LoadUserAccounts();
 
     }
@@ -60,6 +63,7 @@ public class NetworkedServer : MonoBehaviour
                 break;
             case NetworkEventType.ConnectEvent:
                 Debug.Log("Connection, " + recConnectionID);
+                AddNewConnectedUser(recConnectionID);
                 break;
             case NetworkEventType.DataEvent:
                 string msg = Encoding.Unicode.GetString(recBuffer, 0, dataSize);
@@ -67,6 +71,7 @@ public class NetworkedServer : MonoBehaviour
                 break;
             case NetworkEventType.DisconnectEvent:
                 Debug.Log("Disconnection, " + recConnectionID);
+                DeleteConnectedUser(recConnectionID);
                 if(loggedUsers.Exists(x => x.GetConnectionId() == recConnectionID))
                 {
                     DeleteLoggedUser(recConnectionID);
@@ -167,20 +172,31 @@ public class NetworkedServer : MonoBehaviour
         GameObject temp = Instantiate(templateUIUser, transformRegisteredUsers);
         temp.GetComponent<TMPro.TextMeshProUGUI>().text = userName + "," + password;
     }
+    private void AddNewConnectedUser(int connectionId)
+    {
+        connectedUsers.Add(connectionId);
+        transfromConnectedUsers.GetComponent<TMPro.TextMeshProUGUI>().text = "Ids: " + string.Join(",", connectedUsers);
+    }
 
+    private void DeleteConnectedUser(int connectionId)
+    {
+        connectedUsers.Remove(connectionId);
+        transfromConnectedUsers.GetComponent<TMPro.TextMeshProUGUI>().text = "Ids: " + string.Join(",", connectedUsers);
+    }
     private void AddNewLoggedUser(UserAccount user, int connectionId)
     {
         GameObject temp = Instantiate(templateUIUser, transfromLoggedUsers);
         temp.GetComponent<TMPro.TextMeshProUGUI>().text = user.GetName() + "," + connectionId;
-        loggedUsers.Add(new LoggedAccount(temp, user, connectionId));
+        loggedUsers.Add(new ConnectedAccount(temp, user, connectionId));
     }
 
     private void DeleteLoggedUser(int connectionId)
     {
-        LoggedAccount temp = loggedUsers.Find(x => x.GetConnectionId() == connectionId);
+        ConnectedAccount temp = loggedUsers.Find(x => x.GetConnectionId() == connectionId);
         Destroy(temp.GetObject());
         loggedUsers.Remove(temp);
     }
+
 }
 public static class ServerClientSignifiers
 {
@@ -207,9 +223,9 @@ public class UserAccount
 
 }
 
-public class LoggedAccount
+public class ConnectedAccount
 {
-    public LoggedAccount(GameObject obj, UserAccount user, int connectionId)
+    public ConnectedAccount(GameObject obj, UserAccount user, int connectionId)
     {
         this.obj = obj;
         this.connectionId = connectionId;
