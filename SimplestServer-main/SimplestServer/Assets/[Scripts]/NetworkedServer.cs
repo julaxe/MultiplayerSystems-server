@@ -15,10 +15,12 @@ public class NetworkedServer : MonoBehaviour
     List<UserAccount> userAccounts;
     List<int> connectedUsers;
     List<ConnectedAccount> loggedUsers;
+    List<ConnectedAccount> inQueueUsers;
     private GameObject templateUIUser;
     private Transform transformRegisteredUsers;
     private Transform transfromLoggedUsers;
     private Transform transfromConnectedUsers;
+    private Transform transfromInQueueUsers;
 
     void Start()
     {
@@ -35,11 +37,13 @@ public class NetworkedServer : MonoBehaviour
         transformRegisteredUsers = GameObject.Find("Canvas/UsersRegistered/Scroll").transform;
         transfromLoggedUsers = GameObject.Find("Canvas/UsersLoggedIn/Scroll").transform;
         transfromConnectedUsers = GameObject.Find("Canvas/UsersConnected/Scroll").transform;
+        transfromInQueueUsers = GameObject.Find("Canvas/UsersInQueue/Scroll").transform;
         templateUIUser = Resources.Load<GameObject>("Prefabs/User");
 
         userAccounts = new List<UserAccount>();
         connectedUsers = new List<int>();
         loggedUsers = new List<ConnectedAccount>();
+        inQueueUsers = new List<ConnectedAccount>();
         LoadUserAccounts();
 
     }
@@ -75,7 +79,12 @@ public class NetworkedServer : MonoBehaviour
                 if(loggedUsers.Exists(x => x.GetConnectionId() == recConnectionID))
                 {
                     DeleteLoggedUser(recConnectionID);
+                    if(inQueueUsers.Exists(x => x.GetConnectionId() == recConnectionID))
+                    {
+                        DeleteInQueueUser(recConnectionID);
+                    }
                 }
+
                 break;
         }
 
@@ -87,25 +96,25 @@ public class NetworkedServer : MonoBehaviour
         byte[] buffer = Encoding.Unicode.GetBytes(msg);
         NetworkTransport.Send(hostID, id, reliableChannelID, buffer, msg.Length * sizeof(char), out error);
     }
-    
+
     private void ProcessRecievedMsg(string msg, int id)
-    { 
+    {
         string[] data = msg.Split(',');
 
-        if(data[0] == ServerClientSignifiers.Login)
+        if (data[0] == ServerClientSignifiers.Login)
         {
             Debug.Log("start login");
             //check first if the user is already logged in
-            if(loggedUsers.Exists(x => x.GetConnectionId() == id))
+            if (loggedUsers.Exists(x => x.GetConnectionId() == id))
             {
-                SendMessageToClient(ServerStatus.Error+ "," + ServerClientSignifiers.Login + ",User already logged in", id);
+                SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.Login + ",User already logged in", id);
                 return;
             }
             //check if the user already exist
-            if(userAccounts.Exists(x => x.GetName() == data[1]))
+            if (userAccounts.Exists(x => x.GetName() == data[1]))
             {
                 //now check the password
-                if(userAccounts.Exists(x => x.GetName() == data[1] && x.GetPassword() == data[2]))
+                if (userAccounts.Exists(x => x.GetName() == data[1] && x.GetPassword() == data[2]))
                 {
                     //successfull login
                     SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.Login + ",Successfully logged in", id);
@@ -136,6 +145,23 @@ public class NetworkedServer : MonoBehaviour
                 SaveUserAccounts();
                 SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.Register + ",New user created", id);
             }
+        }
+        else if (data[0] == ServerClientSignifiers.FindMatch)
+        {
+            Debug.Log("looking for match");
+            //add the user to the Queue list.
+            AddNewInQueueUser(loggedUsers.Find(x => x.GetConnectionId() == id).GetUser(), id);
+            //check if there is another users in the queue list -> if true then match.
+            if(inQueueUsers.Count > 1)
+            {
+                //start match between the 2 first users
+                SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.FindMatch + ",Match Found", id);
+            }
+            else
+            {
+                SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.FindMatch + ",Not enough players to match", id);
+            }
+            //if not then ->not in match
         }
 
     }
@@ -197,17 +223,25 @@ public class NetworkedServer : MonoBehaviour
         loggedUsers.Remove(temp);
     }
 
+    private void AddNewInQueueUser(UserAccount user, int connectionId)
+    {
+        if(!inQueueUsers.Exists(x => x.GetConnectionId() == connectionId))
+        {
+            GameObject temp = Instantiate(templateUIUser, transfromInQueueUsers);
+            temp.GetComponent<TMPro.TextMeshProUGUI>().text = user.GetName() + "," + connectionId;
+            inQueueUsers.Add(new ConnectedAccount(temp, user, connectionId));
+        }
+    }
+
+    private void DeleteInQueueUser(int connectionId)
+    {
+        ConnectedAccount temp = inQueueUsers.Find(x => x.GetConnectionId() == connectionId);
+        Destroy(temp.GetObject());
+        inQueueUsers.Remove(temp);
+    }
+
 }
-public static class ServerClientSignifiers
-{
-    public static string Login = "001";
-    public static string Register = "002";
-}
-public static class ServerStatus
-{
-    public static string Success = "001";
-    public static string Error = "002";
-}
+
 public class UserAccount
 {
     public UserAccount(string name, string password)
@@ -238,4 +272,16 @@ public class ConnectedAccount
     public int GetConnectionId() { return connectionId; }
     public UserAccount GetUser() { return user; }
     public GameObject GetObject() { return obj; }
+}
+
+public static class ServerClientSignifiers
+{
+    public static string Login = "001";
+    public static string Register = "002";
+    public static string FindMatch = "003";
+}
+public static class ServerStatus
+{
+    public static string Success = "001";
+    public static string Error = "002";
 }
