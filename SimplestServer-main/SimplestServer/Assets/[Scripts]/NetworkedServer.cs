@@ -87,6 +87,10 @@ public class NetworkedServer : MonoBehaviour
                     {
                         DeleteInQueueUser(recConnectionID);
                     }
+                    if(_gameRooms.Exists(x => x.Player1().GetConnectionId() == recConnectionID || x.Player2().GetConnectionId() == recConnectionID))
+                    {
+                        DeleteGameRoom(recConnectionID);
+                    }
                 }
 
                 break;
@@ -159,15 +163,12 @@ public class NetworkedServer : MonoBehaviour
             if(inQueueUsers.Count > 1)
             {
                 //start match between the 2 first users
-                foreach(var user in inQueueUsers)
-                {
-                    SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.FindMatch + ",Match Found", user.GetConnectionId());
-                }
                 AddGameRoom(inQueueUsers[0], inQueueUsers[1]);
+
             }
             else
             {
-                SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.FindMatch + ",Not enough players to match", id);
+                SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.Message + ",Not enough players to match", id);
             }
             //if not then ->not in match
         }
@@ -253,14 +254,36 @@ public class NetworkedServer : MonoBehaviour
         GameObject temp = Instantiate(templateUIUser, transfromGameRooms);
         temp.GetComponent<TMPro.TextMeshProUGUI>().text = p1.GetUser().GetName() + " vs " + p2.GetUser().GetName();
         _gameRooms.Add(new GameRoom(temp, p1, p2));
+
+        SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.FindMatch + ",Match Found,Player1," + p2.GetUser().GetName(), p1.GetConnectionId());
+        SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.FindMatch + ",Match Found,Player2," + p1.GetUser().GetName(), p2.GetConnectionId());
+        
+        if(_gameRooms[0].PlayerTurn()[0])
+        {
+            SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.InGame + ",Is your turn", p1.GetConnectionId());
+            SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.InGame + ",Enemy's turn", p2.GetConnectionId());
+        }
+        else
+        {
+            SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.InGame + ",Is your turn", p2.GetConnectionId());
+            SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.InGame + ",Enemy's turn", p1.GetConnectionId());
+        }
         DeleteInQueueUser(p1.GetConnectionId());
         DeleteInQueueUser(p2.GetConnectionId());
     }
 
-    private void DeleteGameRoom(ConnectedAccount any)
+    private void DeleteGameRoom(int connectionId)
     {
-        GameRoom temp = _gameRooms.Find(x => (x.Player1() == any || x.Player2() == any));
+        GameRoom temp = _gameRooms.Find(x => (x.Player1().GetConnectionId() == connectionId || x.Player2().GetConnectionId() == connectionId));
         Destroy(temp.GetObject());
+        if(temp.Player1().GetConnectionId() == connectionId)
+        {
+            SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.FindMatch + "," + "The other player has disconnected", temp.Player2().GetConnectionId());
+        }
+        else
+        {
+            SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.FindMatch + "," + "The other player has disconnected", temp.Player1().GetConnectionId());
+        }
         _gameRooms.Remove(temp);
     }
 
@@ -305,21 +328,35 @@ public class GameRoom
         _obj = obj;
         _player1 = account1;
         _player2 = account2;
+        _playerTurn = new bool[2]; //only 2 players
+        _playerTurn[0] = Random.Range(0, 2) == 1;
+        _playerTurn[1] = !_playerTurn[0];
     }
     private ConnectedAccount _player1;
     private ConnectedAccount _player2;
+    private bool[] _playerTurn;
     private GameObject _obj;
 
     public GameObject GetObject() { return _obj; }
     public ConnectedAccount Player1() { return _player1; }
     public ConnectedAccount Player2() { return _player2; }
+
+    public bool[] PlayerTurn() { return _playerTurn; }
+
+    public void ChangeTurns()
+    {
+        _playerTurn[0] = _playerTurn[1];
+        _playerTurn[1] = !_playerTurn[0];
+    }
 }
 
 public static class ServerClientSignifiers
 {
+    public static string Message = "000";
     public static string Login = "001";
     public static string Register = "002";
     public static string FindMatch = "003";
+    public static string InGame = "004";
 }
 public static class ServerStatus
 {
