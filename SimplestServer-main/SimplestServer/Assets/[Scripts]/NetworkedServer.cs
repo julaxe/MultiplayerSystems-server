@@ -107,11 +107,11 @@ public class NetworkedServer : MonoBehaviour
 
     private void ProcessRecievedMsg(string msg, int id)
     {
+        Debug.Log("----From user " + id+ ": " + msg);
         string[] data = msg.Split(',');
-
+        
         if (data[0] == ServerClientSignifiers.Login)
         {
-            Debug.Log("start login");
             //check first if the user is already logged in
             if (loggedUsers.Exists(x => x.GetConnectionId() == id))
             {
@@ -171,6 +171,17 @@ public class NetworkedServer : MonoBehaviour
                 SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.Message + ",Not enough players to match", id);
             }
             //if not then ->not in match
+        }
+        else if(data[0] == ServerClientSignifiers.Board)
+        {
+            GameRoom temp = _gameRooms.Find(x => x.Player1().GetConnectionId() == id || x.Player2().GetConnectionId() == id);
+            if(temp != null)
+            {
+                temp.UpdateBoard(data[1]);
+                SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.Board + ",Board has been updated," + temp.Board(), temp.Player1().GetConnectionId());
+                SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.Board + ",Board has been updated," + temp.Board(), temp.Player2().GetConnectionId());
+            }
+            
         }
 
     }
@@ -331,17 +342,22 @@ public class GameRoom
         _playerTurn = new bool[2]; //only 2 players
         _playerTurn[0] = Random.Range(0, 2) == 1;
         _playerTurn[1] = !_playerTurn[0];
+        _board = "0 0 0 0 0 0 0 0 0"; //empty board
     }
     private ConnectedAccount _player1;
     private ConnectedAccount _player2;
     private bool[] _playerTurn;
     private GameObject _obj;
+    private string _board;
 
     public GameObject GetObject() { return _obj; }
     public ConnectedAccount Player1() { return _player1; }
     public ConnectedAccount Player2() { return _player2; }
 
     public bool[] PlayerTurn() { return _playerTurn; }
+
+    public string Board() { return _board; }
+    public void UpdateBoard(string board) { _board = board; }
 
     public void ChangeTurns()
     {
@@ -357,6 +373,7 @@ public static class ServerClientSignifiers
     public static string Register = "002";
     public static string FindMatch = "003";
     public static string InGame = "004";
+    public static string Board = "005";
 }
 public static class ServerStatus
 {
