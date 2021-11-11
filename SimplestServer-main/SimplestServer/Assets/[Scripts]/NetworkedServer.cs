@@ -109,7 +109,7 @@ public class NetworkedServer : MonoBehaviour
     {
         Debug.Log("----From user " + id+ ": " + msg);
         string[] data = msg.Split(',');
-        
+
         if (data[0] == ServerClientSignifiers.Login)
         {
             //check first if the user is already logged in
@@ -160,7 +160,7 @@ public class NetworkedServer : MonoBehaviour
             //add the user to the Queue list.
             AddNewInQueueUser(loggedUsers.Find(x => x.GetConnectionId() == id).GetUser(), id);
             //check if there is another users in the queue list -> if true then match.
-            if(inQueueUsers.Count > 1)
+            if (inQueueUsers.Count > 1)
             {
                 //start match between the 2 first users
                 AddGameRoom(inQueueUsers[0], inQueueUsers[1]);
@@ -172,18 +172,36 @@ public class NetworkedServer : MonoBehaviour
             }
             //if not then ->not in match
         }
-        else if(data[0] == ServerClientSignifiers.Board)
+        else if (data[0] == ServerClientSignifiers.InGame) //disconnect from actual game room
+        {
+            DeleteGameRoom(id);
+        }
+        else if (data[0] == ServerClientSignifiers.Board)
         {
             GameRoom temp = _gameRooms.Find(x => x.Player1().GetConnectionId() == id || x.Player2().GetConnectionId() == id);
-            if(temp != null)
+            if (temp != null)
             {
                 temp.UpdateBoard(data[1]);
                 SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.Board + ",Board has been updated," + temp.Board(), temp.Player1().GetConnectionId());
                 SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.Board + ",Board has been updated," + temp.Board(), temp.Player2().GetConnectionId());
-            }
-            
-        }
 
+                temp.ChangeTurns();
+                SendTurnStateToRoom(temp);
+                CheckIfPlayerWins(temp);
+            }
+
+        }
+        else if (data[0] == ServerClientSignifiers.Restart)
+        {
+            GameRoom temp = _gameRooms.Find(x => x.Player1().GetConnectionId() == id || x.Player2().GetConnectionId() == id);
+            if (temp != null)
+            {
+                temp.UpdateBoard("0 0 0 0 0 0 0 0 0");
+                SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.Restart + ",Board reseted", temp.Player1().GetConnectionId());
+                SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.Restart + ",Board reseted", temp.Player2().GetConnectionId());
+
+            }
+        }
     }
 
     private void LoadUserAccounts()
@@ -269,16 +287,7 @@ public class NetworkedServer : MonoBehaviour
         SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.FindMatch + ",Match Found,Player1," + p2.GetUser().GetName(), p1.GetConnectionId());
         SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.FindMatch + ",Match Found,Player2," + p1.GetUser().GetName(), p2.GetConnectionId());
         
-        if(_gameRooms[0].PlayerTurn()[0])
-        {
-            SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.InGame + ",Is your turn", p1.GetConnectionId());
-            SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.InGame + ",Enemy's turn", p2.GetConnectionId());
-        }
-        else
-        {
-            SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.InGame + ",Is your turn", p2.GetConnectionId());
-            SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.InGame + ",Enemy's turn", p1.GetConnectionId());
-        }
+        SendTurnStateToRoom(_gameRooms[0]); // the room that we just added.
         DeleteInQueueUser(p1.GetConnectionId());
         DeleteInQueueUser(p2.GetConnectionId());
     }
@@ -286,18 +295,80 @@ public class NetworkedServer : MonoBehaviour
     private void DeleteGameRoom(int connectionId)
     {
         GameRoom temp = _gameRooms.Find(x => (x.Player1().GetConnectionId() == connectionId || x.Player2().GetConnectionId() == connectionId));
+        if(temp == null)
+        {
+            //just in queue
+            DeleteInQueueUser(connectionId);
+            return;
+        }
         Destroy(temp.GetObject());
         if(temp.Player1().GetConnectionId() == connectionId)
         {
             SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.FindMatch + "," + "The other player has disconnected", temp.Player2().GetConnectionId());
+            SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.FindMatch + "," + "disconnected from the actual game room", temp.Player1().GetConnectionId());
         }
         else
         {
             SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.FindMatch + "," + "The other player has disconnected", temp.Player1().GetConnectionId());
+            SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.FindMatch + "," + "disconnected from the actual game room", temp.Player2().GetConnectionId());
         }
         _gameRooms.Remove(temp);
     }
 
+    private void SendTurnStateToRoom(GameRoom gameRoom)
+    {
+        if (gameRoom.PlayerTurn()[0])
+        {
+            SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.InGame + ",Is your turn", gameRoom.Player1().GetConnectionId());
+            SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.InGame + ",Enemy's turn", gameRoom.Player2().GetConnectionId());
+        }
+        else
+        {
+            SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.InGame + ",Is your turn", gameRoom.Player2().GetConnectionId());
+            SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.InGame + ",Enemy's turn", gameRoom.Player1().GetConnectionId());
+        }
+    }
+
+    private bool CheckIfPlayerWins(GameRoom gameRoom)
+    {
+        string[] board = gameRoom.Board().Split(' ');
+
+        //check if player 1 wins.
+        string player1Mark = "1";
+        string player2Mark = "2";
+        if(CheckBoardWinningState(player1Mark, board))
+        {
+            SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.PlayerWin + ",You Win!", gameRoom.Player1().GetConnectionId());
+            SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.PlayerWin + ",You Lose!", gameRoom.Player2().GetConnectionId());
+            return true;
+        }
+        if (CheckBoardWinningState(player2Mark, board))
+        {
+            SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.PlayerWin + ",You Win!", gameRoom.Player2().GetConnectionId());
+            SendMessageToClient(ServerStatus.Error + "," + ServerClientSignifiers.PlayerWin + ",You Lose!", gameRoom.Player1().GetConnectionId());
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool CheckBoardWinningState(string playerMark, string[] board)
+    {
+        if ((board[0] == board[1] && board[1] == board[2] && board[2] == playerMark) || //top row
+            (board[3] == board[4] && board[4] == board[5] && board[5] == playerMark) || //middle row
+            (board[6] == board[7] && board[7] == board[8] && board[8] == playerMark) || //bottom row
+            (board[0] == board[3] && board[3] == board[6] && board[6] == playerMark) || // left column
+            (board[1] == board[4] && board[4] == board[7] && board[7] == playerMark) || // middle column
+            (board[2] == board[5] && board[5] == board[8] && board[8] == playerMark) || // right column
+            (board[0] == board[4] && board[4] == board[8] && board[8] == playerMark) || //first cross
+            (board[2] == board[4] && board[4] == board[6] && board[6] == playerMark)  //second cross
+            )
+        {
+            return true;
+        }
+
+        return false;
+    }
 }
 
 public class UserAccount
@@ -374,6 +445,8 @@ public static class ServerClientSignifiers
     public static string FindMatch = "003";
     public static string InGame = "004";
     public static string Board = "005";
+    public static string PlayerWin = "006";
+    public static string Restart = "007";
 }
 public static class ServerStatus
 {
