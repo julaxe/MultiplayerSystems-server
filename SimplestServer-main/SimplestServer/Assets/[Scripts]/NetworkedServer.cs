@@ -104,10 +104,22 @@ public class NetworkedServer : MonoBehaviour
         byte[] buffer = Encoding.Unicode.GetBytes(msg);
         NetworkTransport.Send(hostID, id, reliableChannelID, buffer, msg.Length * sizeof(char), out error);
     }
-
+    public void SendMessageToGameRoom(string msg, GameRoom room)
+    {
+        SendMessageToClient(msg, room.Player1().GetConnectionId());
+        SendMessageToClient(msg, room.Player2().GetConnectionId());
+        if(room.GetSpectatorList().Count > 0)
+        {
+            foreach(ConnectedAccount user in room.GetSpectatorList())
+            {
+                SendMessageToClient(msg, user.GetConnectionId());
+            }
+        }
+        
+    }
     private void ProcessRecievedMsg(string msg, int id)
     {
-        Debug.Log("----From user " + id+ ": " + msg);
+        Debug.Log("----From user " + id + ": " + msg);
         string[] data = msg.Split(',');
 
         if (data[0] == ServerClientSignifiers.Login)
@@ -182,8 +194,7 @@ public class NetworkedServer : MonoBehaviour
             if (temp != null)
             {
                 temp.UpdateBoard(data[1]);
-                SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.Board + ",Board has been updated," + temp.Board(), temp.Player1().GetConnectionId());
-                SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.Board + ",Board has been updated," + temp.Board(), temp.Player2().GetConnectionId());
+                SendMessageToGameRoom(ServerStatus.Success + "," + ServerClientSignifiers.Board + ",Board has been updated," + temp.GetBoard(), temp);
 
                 temp.ChangeTurns();
                 SendTurnStateToRoom(temp);
@@ -191,15 +202,44 @@ public class NetworkedServer : MonoBehaviour
             }
 
         }
+        else if (data[0] == ServerClientSignifiers.ChatUpdated)
+        {
+            GameRoom temp = _gameRooms.Find(x => x.Player1().GetConnectionId() == id || x.Player2().GetConnectionId() == id);
+            if (temp != null)
+            {
+                string playerName = id == temp.Player1().GetConnectionId() ? temp.Player1().GetUser().GetName() : temp.Player2().GetUser().GetName();
+                string newMessage = playerName + ": " + data[1];
+                temp.AddNewMessageToChat(newMessage);
+                SendMessageToGameRoom(ServerStatus.Success + "," + ServerClientSignifiers.ChatUpdated + ",Chat succesfully updated," + newMessage, temp);
+            }
+        }
         else if (data[0] == ServerClientSignifiers.Restart)
         {
             GameRoom temp = _gameRooms.Find(x => x.Player1().GetConnectionId() == id || x.Player2().GetConnectionId() == id);
             if (temp != null)
             {
                 temp.UpdateBoard("0 0 0 0 0 0 0 0 0");
-                SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.Restart + ",Board reseted", temp.Player1().GetConnectionId());
-                SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.Restart + ",Board reseted", temp.Player2().GetConnectionId());
-
+                SendMessageToGameRoom(ServerStatus.Success + "," + ServerClientSignifiers.Restart + ",Board reseted", temp);
+            }
+        }
+        else if (data[0] == ServerClientSignifiers.SpectateList)
+        {
+            if(_gameRooms.Count > 0)
+            {
+                foreach(GameRoom room in _gameRooms)
+                {
+                    string roomName = room.Player1().GetUser().GetName() + " vs " + room.Player2().GetUser().GetName();
+                    SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.SpectateList + ",Game Room added to the spectate list," + roomName +","+ room.GetRoomId(), id);
+                }
+            }
+        }
+        else if (data[0] == ServerClientSignifiers.SpectateGame)
+        {
+            if (_gameRooms.Count > 0)
+            {
+                GameRoom room =_gameRooms.Find(x => x.GetRoomId() == int.Parse(data[1]));
+                room.AddANewSpectator(loggedUsers.Find(x => x.GetConnectionId() == id));
+                SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.SpectateGame + ",Spectating the game," + room.GetBoard(), id);
             }
         }
     }
@@ -282,12 +322,13 @@ public class NetworkedServer : MonoBehaviour
     {
         GameObject temp = Instantiate(templateUIUser, transfromGameRooms);
         temp.GetComponent<TMPro.TextMeshProUGUI>().text = p1.GetUser().GetName() + " vs " + p2.GetUser().GetName();
-        _gameRooms.Add(new GameRoom(temp, p1, p2));
-
-        SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.FindMatch + ",Match Found,Player1," + p2.GetUser().GetName(), p1.GetConnectionId());
-        SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.FindMatch + ",Match Found,Player2," + p1.GetUser().GetName(), p2.GetConnectionId());
+        GameRoom newRoom = new GameRoom(temp, p1, p2);
+        _gameRooms.Add(newRoom);
         
-        SendTurnStateToRoom(_gameRooms[0]); // the room that we just added.
+        SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.FindMatch + ",Match Found,Player1," + p2.GetUser().GetName() + "," + newRoom.GetRoomId(), p1.GetConnectionId());
+        SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.FindMatch + ",Match Found,Player2," + p1.GetUser().GetName() + "," + newRoom.GetRoomId(), p2.GetConnectionId());
+        
+        SendTurnStateToRoom(newRoom); // the room that we just added.
         DeleteInQueueUser(p1.GetConnectionId());
         DeleteInQueueUser(p2.GetConnectionId());
     }
@@ -331,7 +372,7 @@ public class NetworkedServer : MonoBehaviour
 
     private bool CheckIfPlayerWins(GameRoom gameRoom)
     {
-        string[] board = gameRoom.Board().Split(' ');
+        string[] board = gameRoom.GetBoard().Split(' ');
 
         //check if player 1 wins.
         string player1Mark = "1";
@@ -402,7 +443,6 @@ public class ConnectedAccount
     public UserAccount GetUser() { return user; }
     public GameObject GetObject() { return obj; }
 }
-
 public class GameRoom
 {
     public GameRoom(GameObject obj, ConnectedAccount account1, ConnectedAccount account2)
@@ -414,12 +454,20 @@ public class GameRoom
         _playerTurn[0] = Random.Range(0, 2) == 1;
         _playerTurn[1] = !_playerTurn[0];
         _board = "0 0 0 0 0 0 0 0 0"; //empty board
+        _roomId = id++;
+        _chat = new List<string>();
+        _spectatorList = new List<ConnectedAccount>();
     }
     private ConnectedAccount _player1;
     private ConnectedAccount _player2;
     private bool[] _playerTurn;
     private GameObject _obj;
     private string _board;
+    private int _roomId;
+    private List<string> _chat;
+    private List<ConnectedAccount> _spectatorList;
+
+    public static int id;
 
     public GameObject GetObject() { return _obj; }
     public ConnectedAccount Player1() { return _player1; }
@@ -427,14 +475,32 @@ public class GameRoom
 
     public bool[] PlayerTurn() { return _playerTurn; }
 
-    public string Board() { return _board; }
+    public string GetBoard() { return _board; }
+
+    public int GetRoomId() { return _roomId; }
     public void UpdateBoard(string board) { _board = board; }
+
+    public void AddNewMessageToChat(string newMessage)
+    {
+        _chat.Add(newMessage);
+    }
+    public List<string> GetChat() { return _chat; }
 
     public void ChangeTurns()
     {
         _playerTurn[0] = _playerTurn[1];
         _playerTurn[1] = !_playerTurn[0];
     }
+
+    public void AddANewSpectator(ConnectedAccount user)
+    {
+        _spectatorList.Add(user);
+    }
+    public void DeleteASpectator(ConnectedAccount user)
+    {
+        _spectatorList.Remove(user);
+    }
+    public List<ConnectedAccount> GetSpectatorList() { return _spectatorList; }
 }
 
 public static class ServerClientSignifiers
@@ -447,6 +513,11 @@ public static class ServerClientSignifiers
     public static string Board = "005";
     public static string PlayerWin = "006";
     public static string Restart = "007";
+    public static string ChatUpdated = "008";
+    public static string SpectateList = "009";
+    public static string SpectateGame = "010";
+    public static string MatchHistory = "011";
+    public static string ReplaySystem = "012";
 }
 public static class ServerStatus
 {
