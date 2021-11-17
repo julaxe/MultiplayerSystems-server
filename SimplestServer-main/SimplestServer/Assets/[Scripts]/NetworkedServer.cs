@@ -24,6 +24,7 @@ public class NetworkedServer : MonoBehaviour
     private Transform transfromInQueueUsers;
     private Transform transfromGameRooms;
 
+
     void Start()
     {
         NetworkTransport.Init();
@@ -176,7 +177,6 @@ public class NetworkedServer : MonoBehaviour
             {
                 //start match between the 2 first users
                 AddGameRoom(inQueueUsers[0], inQueueUsers[1]);
-
             }
             else
             {
@@ -196,9 +196,24 @@ public class NetworkedServer : MonoBehaviour
                 temp.UpdateBoard(data[1]);
                 SendMessageToGameRoom(ServerStatus.Success + "," + ServerClientSignifiers.Board + ",Board has been updated," + temp.GetBoard(), temp);
 
+                if(temp.Player1().GetConnectionId() == id)
+                {
+                    temp.UpdateGameReplayInPlayer(temp.Player1().GetUser().GetName(), data[1]);
+                }
+                else
+                {
+                    temp.UpdateGameReplayInPlayer(temp.Player2().GetUser().GetName(), data[1]);
+                }
+
                 temp.ChangeTurns();
                 SendTurnStateToRoom(temp);
-                CheckIfPlayerWins(temp);
+                if(CheckIfPlayerWins(temp))
+                {
+                    temp.Player1().AddGameToMatchHistory();
+                    temp.Player2().AddGameToMatchHistory();
+                    temp.Player1().SaveMatchHistory();
+                    temp.Player2().SaveMatchHistory();
+                }
             }
 
         }
@@ -220,6 +235,7 @@ public class NetworkedServer : MonoBehaviour
             {
                 temp.UpdateBoard("0 0 0 0 0 0 0 0 0");
                 SendMessageToGameRoom(ServerStatus.Success + "," + ServerClientSignifiers.Restart + ",Board reseted", temp);
+                temp.SetGameReplayInPlayers();
             }
         }
         else if (data[0] == ServerClientSignifiers.SpectateList)
@@ -240,6 +256,24 @@ public class NetworkedServer : MonoBehaviour
                 GameRoom room =_gameRooms.Find(x => x.GetRoomId() == int.Parse(data[1]));
                 room.AddANewSpectator(loggedUsers.Find(x => x.GetConnectionId() == id));
                 SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.SpectateGame + ",Spectating the game," + room.GetBoard(), id);
+            }
+        }
+        else if (data[0] == ServerClientSignifiers.MatchHistory)
+        {
+            ConnectedAccount user = loggedUsers.Find(x => x.GetConnectionId() == id);
+            for(int i = 0; i < user.GetMatchHistory().Count; i++)
+            {
+                SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.MatchHistory + ",New game replay founded," + user.GetMatchHistory()[i].GetReplayName() + "," + i, id);
+            }
+
+        }
+        else if (data[0] == ServerClientSignifiers.ReplaySystem)
+        {
+            ConnectedAccount user = loggedUsers.Find(x => x.GetConnectionId() == id);
+            GameReplay replay = user.GetMatchHistory()[int.Parse(data[1])];
+            foreach(PlayerBoardMove boardMove in replay.GetListOfPlays())
+            {
+                SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.ReplaySystem + ",New board move founded," + boardMove.playerName + "," + boardMove.board, id);
             }
         }
     }
@@ -322,7 +356,9 @@ public class NetworkedServer : MonoBehaviour
     {
         GameObject temp = Instantiate(templateUIUser, transfromGameRooms);
         temp.GetComponent<TMPro.TextMeshProUGUI>().text = p1.GetUser().GetName() + " vs " + p2.GetUser().GetName();
-        GameRoom newRoom = new GameRoom(temp, p1, p2);
+        ConnectedAccount loggedUser1 = loggedUsers.Find(x => x.GetUser() == p1.GetUser());
+        ConnectedAccount loggedUser2 = loggedUsers.Find(x => x.GetUser() == p2.GetUser());
+        GameRoom newRoom = new GameRoom(temp, loggedUser1, loggedUser2);
         _gameRooms.Add(newRoom);
         
         SendMessageToClient(ServerStatus.Success + "," + ServerClientSignifiers.FindMatch + ",Match Found,Player1," + p2.GetUser().GetName() + "," + newRoom.GetRoomId(), p1.GetConnectionId());
@@ -339,7 +375,10 @@ public class NetworkedServer : MonoBehaviour
         if(temp == null)
         {
             //just in queue
-            DeleteInQueueUser(connectionId);
+            if(inQueueUsers.Exists(x => x.GetConnectionId()==connectionId))
+            {
+                DeleteInQueueUser(connectionId);
+            }
             return;
         }
         Destroy(temp.GetObject());
@@ -434,14 +473,99 @@ public class ConnectedAccount
         this.obj = obj;
         this.connectionId = connectionId;
         this.user = user;
+        this.matchHistory = new List<GameReplay>();
+        this.gameReplay = null;
+        LoadMatchHistory();
     }
 
     private GameObject obj;
     private int connectionId;
     private UserAccount user;
+    private GameReplay gameReplay;
+    private List<GameReplay> matchHistory;
     public int GetConnectionId() { return connectionId; }
     public UserAccount GetUser() { return user; }
     public GameObject GetObject() { return obj; }
+    public void SetGameReplay(string replayName)
+    {
+        gameReplay = new GameReplay(replayName);
+    }
+
+    public void UpdateGameReplay(string player, string board)
+    {
+        if (gameReplay != null)
+        {
+            gameReplay.AddAPlayerBoardMove(player, board);
+        }
+    }
+    public List<GameReplay> GetMatchHistory() { return matchHistory; }
+    public void AddGameToMatchHistory()
+    {
+        if(gameReplay != null)
+        {
+            matchHistory.Add(gameReplay);
+        }
+    }
+    public void SaveMatchHistory()
+    {
+        string path = Application.dataPath + Path.DirectorySeparatorChar + user.GetName() +".txt";
+        StreamWriter sw = new StreamWriter(path);
+        foreach (GameReplay replay in matchHistory)
+        {
+            sw.WriteLine(replay.GetReplayName());
+            foreach (PlayerBoardMove boardMove in replay.GetListOfPlays())
+            {
+                sw.WriteLine(boardMove.playerName + "," + boardMove.board);
+            }
+            sw.WriteLine("");
+        }
+        sw.Close();
+    }
+    public void LoadMatchHistory()
+    {
+        string path = Application.dataPath + Path.DirectorySeparatorChar + user.GetName() + ".txt";
+        StreamReader sr = null;
+        try
+        {
+            sr = new StreamReader(path);
+        }catch(FileNotFoundException e)
+        {
+            Debug.Log(e);
+            return;
+        }
+
+        string line = "";
+        GameReplay replay = null;
+        if (sr != null)
+        {
+            int lineNumber = 0;
+            string player = "";
+            string board = "";
+            while ((line = sr.ReadLine()) != null)
+            {
+                if (lineNumber == 0)
+                {
+                    replay = new GameReplay(line);
+                }
+                else
+                {
+                    if (line == "")
+                    {
+                        lineNumber = -1;
+                        matchHistory.Add(replay);
+                    }
+                    else
+                    {
+                        string[] data = line.Split(',');
+                        player = data[0];
+                        board = data[1];
+                        replay.AddAPlayerBoardMove(player, board);
+                    }
+                }
+                lineNumber++;
+            }
+        }
+    }
 }
 public class GameRoom
 {
@@ -457,6 +581,8 @@ public class GameRoom
         _roomId = id++;
         _chat = new List<string>();
         _spectatorList = new List<ConnectedAccount>();
+
+        SetGameReplayInPlayers();
     }
     private ConnectedAccount _player1;
     private ConnectedAccount _player2;
@@ -478,6 +604,7 @@ public class GameRoom
     public string GetBoard() { return _board; }
 
     public int GetRoomId() { return _roomId; }
+
     public void UpdateBoard(string board) { _board = board; }
 
     public void AddNewMessageToChat(string newMessage)
@@ -501,6 +628,41 @@ public class GameRoom
         _spectatorList.Remove(user);
     }
     public List<ConnectedAccount> GetSpectatorList() { return _spectatorList; }
+
+    public void SetGameReplayInPlayers()
+    {
+        _player1.SetGameReplay(_player1.GetUser().GetName() + " vs " + _player2.GetUser().GetName());
+        _player2.SetGameReplay(_player1.GetUser().GetName() + " vs " + _player2.GetUser().GetName());
+    }
+    public void UpdateGameReplayInPlayer(string player, string board)
+    {
+        _player1.UpdateGameReplay(player, board);
+        _player2.UpdateGameReplay(player, board);
+    }
+}
+
+public class GameReplay
+{
+    public GameReplay(string replayName)
+    {
+        this.replayName = replayName;
+        listOfPlays = new List<PlayerBoardMove>();
+    }
+    private string replayName;
+    private List<PlayerBoardMove> listOfPlays;
+    public void AddAPlayerBoardMove(string player, string board)
+    {
+        listOfPlays.Add(new PlayerBoardMove(player, board));
+    }
+
+    public string GetReplayName() { return replayName; }
+    public List<PlayerBoardMove> GetListOfPlays() { return listOfPlays; }
+}
+public struct PlayerBoardMove
+{
+    public PlayerBoardMove(string p, string b) { playerName = p; board = b; }
+    public string playerName;
+    public string board;
 }
 
 public static class ServerClientSignifiers
